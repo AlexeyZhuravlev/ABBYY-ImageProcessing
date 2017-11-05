@@ -67,114 +67,96 @@ TChannelName getCurrentBayerChannel( int x, int y )
 	}
 }
 
-int calcVerticalGradient( const CMatrix& m, int x, int y, int d )
-{
-	return abs( m[y + d][x] - m[y - d][x] ) + abs( m[y + 2 * d][x] - m[y][x] )
-		+ abs( m[y + d][x - 1] - m[y - d][x - 1] ) / 2 + abs( m[y + 2 * d][x - 1] - m[y][x - 1] ) / 2
-		+ abs( m[y + d][x + 1] - m[y - d][x + 1] ) / 2 + abs( m[y + 2 * d][x + 1] - m[y][x + 1] ) / 2;
-}
-
-int calcHorizontalGradient( const CMatrix& m, int x, int y, int d )
-{
-	return abs( m[y][x + d] - m[y][x - d] ) + abs( m[y][x + 2 * d] - m[y][x] )
-		+ abs( m[y - 1][x + d] - m[y - 1][x - d] ) / 2 + abs( m[y - 1][x + 2 * d] - m[y - 1][x] ) / 2
-		+ abs( m[y + 1][x + d] - m[y + 1][x - d] ) / 2 + abs( m[y + 1][x + 2 * d] - m[y + 1][x] ) / 2;
-}
-
-int calcDiagonalGradient( const CMatrix& m, int x, int y, int dx, int dy )
-{
-	return abs( m[y + dy][x + dx] - m[y - dy][x - dx] ) + abs( m[y + 2 * dy][x + 2 * dx] - m[y][x] )
-		+ abs( m[y + dy][x] - m[y][x - dx] ) / 2 + abs( m[y][x + dx] - m[y - dy][x] ) / 2
-		+ abs( m[y + 2 * dy][x + dx] - m[y + dy][x] ) / 2 
-		+ abs( m[y + dy][x + 2 * dx] - m[y][x + dx] ) / 2;
-}
-
-int calcNorthGradient( const CMatrix& m, int x, int y )
-{
-	return calcVerticalGradient( m, x, y, -1 );
-}
-
-int calcSouthGradient( const CMatrix& m, int x, int y )
-{
-	return calcVerticalGradient( m, x, y, 1 );
-}
-
-int calcEastGradient( const CMatrix& m, int x, int y )
-{
-	return calcHorizontalGradient( m, x, y, 1 );
-}
-
-int calcWestGradient( const CMatrix& m, int x, int y )
-{
-	return calcHorizontalGradient( m, x, y, -1 );
-}
-
-int calcNorthEastGradient( const CMatrix& m, int x, int y )
-{
-	return calcDiagonalGradient( m, x, y, 1, -1 );
-}
-
-int calcNorthWestGradient( const CMatrix& m, int x, int y )
-{
-	return calcDiagonalGradient( m, x, y, -1, -1 );
-}
-
-int calcSouthWestGradient( const CMatrix& m, int x, int y )
-{
-	return calcDiagonalGradient( m, x, y, -1, 1 );
-}
-
-int calcSouthEastGradient( const CMatrix& m, int x, int y )
-{
-	return calcDiagonalGradient( m, x, y, 1, 1 );
-}
-
-bool isNorth( int dx, int dy )
-{
-	return dy < 0;
-}
-
-bool isSouth( int dx, int dy )
-{
-	return dy > 0;
-}
-
-bool isWest( int dx, int dy )
-{
-	return dx < 0;
-}
-
-bool isEast( int dx, int dy )
-{
-	return dx > 0;
-}
-
 bool notZero( int dx, int dy )
 {
 	return dx != 0 || dy != 0;
 }
 
+bool isZero( int dx, int dy )
+{
+	return dx == 0 && dy == 0;
+}
+
+bool isNorth( int dx, int dy )
+{
+	return dy < 0 && abs(dx) + abs(dy) <= 2 || isZero( dx, dy );
+}
+
+bool isSouth( int dx, int dy )
+{
+	return dy > 0 && abs( dx ) + abs( dy ) <= 2 || isZero( dx, dy );
+}
+
+bool isWest( int dx, int dy )
+{
+	return dx < 0 && abs( dx ) + abs( dy ) <= 2 || isZero( dx, dy );
+}
+
+bool isEast( int dx, int dy )
+{
+	return dx > 0 && abs( dx ) + abs( dy ) <= 2 || isZero( dx, dy );
+}
+
 bool isNorthWest( int dx, int dy )
 {
-	return dx <= 0 && dy <= 0 && notZero( dx, dy );
+	return dx <= 0 && dy <= 0 && abs( dx - dy ) <= 1;
 }
 
 bool isNorthEast( int dx, int dy )
 {
-	return dx >= 0 && dy <= 0 && notZero( dx, dy );
+	return dx >= 0 && dy <= 0 && abs( dx + dy ) <= 1;
 }
 
 bool isSouthWest( int dx, int dy )
 {
-	return dx <= 0 && dy >= 0 && notZero( dx, dy );
+	return dx <= 0 && dy >= 0 && abs( dx + dy ) <= 1;
 }
 
 bool isSouthEast( int dx, int dy )
 {
-	return dx >= 0 && dy >= 0 && notZero( dx, dy );
+	return dx >= 0 && dy >= 0 && abs( dx - dy ) <= 1;
+}
+
+bool alwaysTrue( int dx, int dy )
+{
+	return true;
 }
 
 typedef bool( *DeltaCheckFunction )( int dx, int dy );
+
+std::pair<int, int> findNearestSameColor( int x, int y, int dx, int dy )
+{
+	int resultX = x;
+	int resultY = y;
+	while( getCurrentBayerChannel( x, y ) != getCurrentBayerChannel( resultX, resultY ) ) {
+		resultX += dx;
+		resultY += dy;
+	}
+	return std::make_pair( resultX, resultY );
+}
+
+int calcDirectionGradient( const CMatrix& m, int sourceX, int sourceY, int grayPadding, DeltaCheckFunction directionCheck, int deltaX, int deltaY )
+{
+	const int radius = 2;
+	int gradient = 0;
+
+	for( int dx = -radius; dx <= radius; dx++ ) {
+		for( int dy = -radius; dy <= radius; dy++ ) {
+			if( !directionCheck( dx, dy ) && notZero( dx, dy ) ) {
+				continue;
+			}
+			int newX, newY;
+			std::tie(newX, newY) = findNearestSameColor( sourceX + dx, sourceY + dy, -deltaX, -deltaY );
+			int gradientValue = abs( m[sourceY + dx + grayPadding][sourceX + dy + grayPadding] - m[newY + grayPadding][newX + grayPadding] );
+			if( dx * deltaY - dy * deltaX != 0 ) {
+				gradientValue /= 2;
+			}
+			gradient += gradientValue;
+		}
+	}
+
+	return gradient;
+}
 
 std::tuple<int, int, int> calcEstimation( const CMatrix& m, int sourceX, int sourceY,
 	int grayPadding, DeltaCheckFunction check )
@@ -243,14 +225,14 @@ std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX
 		isSouthWest
 	};
 	const int gradients[nGradients] = {
-		calcNorthGradient( m, x, y ),
-		calcEastGradient( m, x, y ),
-		calcSouthGradient( m, x, y ),
-		calcWestGradient( m, x, y ),
-		calcNorthEastGradient( m, x, y ),
-	    calcSouthEastGradient( m, x, y ),
-		calcNorthWestGradient( m, x, y ),
-		calcSouthWestGradient( m, x, y )
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isNorth, 0, -1 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isEast, 1, 0 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isSouth, 0, 1 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isWest, -1, 0 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isNorthEast, 1, -1 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isSouthEast, 1, 1 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isNorthWest, -1, -1 ),
+		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isSouthWest, -1, 1 )
 	};
 	int min = *std::min_element( gradients, gradients + nGradients );
 	int max = *std::max_element( gradients, gradients + nGradients );
