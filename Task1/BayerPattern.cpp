@@ -51,17 +51,19 @@ CMatrix getPaddedGrayMatrix( const BitmapData& pData, int padding, int fillValue
 		}
 		baseAdr += pData.Stride;
 	}
+
+	return matrix;
 }
 
 TChannelName getCurrentBayerChannel( int x, int y )
 {
-	if( x % 2 == 1 && y % 2 == 1 ) {
+	if( x % 2 == 0 && y % 2 == 1 ) {
 		return CN_Green;
 	}
 	if( y % 2 == 0 ) {
-		return CN_Blue;
-	} else {
 		return CN_Red;
+	} else {
+		return CN_Blue;
 	}
 }
 
@@ -83,7 +85,7 @@ int calcDiagonalGradient( const CMatrix& m, int x, int y, int dx, int dy )
 {
 	return abs( m[y + dy][x + dx] - m[y - dy][x - dx] ) + abs( m[y + 2 * dy][x + 2 * dx] - m[y][x] )
 		+ abs( m[y + dy][x] - m[y][x - dx] ) / 2 + abs( m[y][x + dx] - m[y - dy][x] ) / 2
-		+ abs( m[y + 2 * dy][x + dx] - m[y + dy][dx] ) / 2 
+		+ abs( m[y + 2 * dy][x + dx] - m[y + dy][x] ) / 2 
 		+ abs( m[y + dy][x + 2 * dx] - m[y][x + dx] ) / 2;
 }
 
@@ -109,22 +111,22 @@ int calcWestGradient( const CMatrix& m, int x, int y )
 
 int calcNorthEastGradient( const CMatrix& m, int x, int y )
 {
-	return calcDiagonalGradient( m, x, y, 1, 1 );
+	return calcDiagonalGradient( m, x, y, 1, -1 );
 }
 
 int calcNorthWestGradient( const CMatrix& m, int x, int y )
 {
-	return calcDiagonalGradient( m, x, y, -1, 1 );
+	return calcDiagonalGradient( m, x, y, -1, -1 );
 }
 
 int calcSouthWestGradient( const CMatrix& m, int x, int y )
 {
-	return calcDiagonalGradient( m, x, y, -1, -1 );
+	return calcDiagonalGradient( m, x, y, -1, 1 );
 }
 
 int calcSouthEastGradient( const CMatrix& m, int x, int y )
 {
-	return calcDiagonalGradient( m, x, y, 1, -1 );
+	return calcDiagonalGradient( m, x, y, 1, 1 );
 }
 
 bool isNorth( int dx, int dy )
@@ -209,7 +211,17 @@ std::tuple<int, int, int> calcEstimation( const CMatrix& m, int sourceX, int sou
 			}
 		}
 	}
-	return std::make_tuple( blue / cntBlue, green / cntGreen, red / cntRed );
+
+	if( cntBlue > 0 ) {
+		blue /= cntBlue;
+	}
+	if( cntGreen > 0 ) {
+		green /= cntGreen;
+	}
+	if( cntRed > 0 ) {
+		red /= cntRed;
+	}
+	return std::make_tuple( blue, green, red );
 }
 
 std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX, int sourceY, 
@@ -264,20 +276,21 @@ std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX
 	int B = currentIntensity;
 	int R = currentIntensity;
 	int G = currentIntensity;
-
-	switch( currentChannel ) {
-		case CN_Red:
-			B += (sumB - sumR) / nGoodGradients;
-			G += (sumG - sumR) / nGoodGradients;
-			break;
-		case CN_Green:
-			R += (sumR - sumG) / nGoodGradients;
-			B += (sumB - sumR) / nGoodGradients;
-			break;
-		case CN_Blue:
-			R += (sumR - sumB) / nGoodGradients;
-			G += (sumG - sumB) / nGoodGradients;
-			break;
+	if( nGoodGradients > 0 ) {
+		switch( currentChannel ) {
+			case CN_Red:
+				B += (sumB - sumR) / nGoodGradients;
+				G += (sumG - sumR) / nGoodGradients;
+				break;
+			case CN_Green:
+				R += (sumR - sumG) / nGoodGradients;
+				B += (sumB - sumG) / nGoodGradients;
+				break;
+			case CN_Blue:
+				R += (sumR - sumB) / nGoodGradients;
+				G += (sumG - sumB) / nGoodGradients;
+				break;
+		}
 	}
 	return std::make_tuple( B, G, R );
 }
@@ -305,8 +318,8 @@ void process( BitmapData& pData )
 			int G = 0;
 			int R = 0;
 
-			//std::tie( B, G, R ) = computeVngInterpolation( paddedGraySource, x,
-			//	y, grayPadding );
+			std::tie( B, G, R ) = computeVngInterpolation( paddedGraySource, x,
+				y, grayPadding );
 
 			pBuffer[pixelAdr] = B;
 			pBuffer[pixelAdr + 1] = G;
