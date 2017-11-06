@@ -11,12 +11,6 @@
 
 using namespace Gdiplus;
 
-static const int LumaRed = 9798;	//	0.299
-static const int LumaGreen = 19235;	//	0.587
-static const int LumaBlue = 3735;	//	0.114
-static const int CoeffNormalizationBitsCount = 15;
-static const int CoeffNormalization = 1 << CoeffNormalizationBitsCount;
-
 typedef std::vector<BYTE> CRow;
 typedef std::vector<CRow> CMatrix;
 
@@ -44,10 +38,7 @@ CMatrix getPaddedGrayMatrix( const BitmapData& pData, int padding, int fillValue
 			int G = pBuffer[pixelAdr + 1]; // green
 			int R = pBuffer[pixelAdr + 2]; // red
 
-			int Y = (LumaRed * R + LumaGreen * G + LumaBlue * B + (CoeffNormalization >> 1))
-				>> CoeffNormalizationBitsCount; // luminance
-
-			matrix[y + padding][x + padding] = Y;
+			matrix[y + padding][x + padding] = ( B + G + R ) / 3;
 
 			pixelAdr += 3;
 		}
@@ -67,16 +58,6 @@ TChannelName getCurrentBayerChannel( int x, int y )
 	} else {
 		return CN_Blue;
 	}
-}
-
-bool notZero( int dx, int dy )
-{
-	return dx != 0 || dy != 0;
-}
-
-bool isZero( int dx, int dy )
-{
-	return dx == 0 && dy == 0;
 }
 
 bool isNorth( int dx, int dy )
@@ -119,11 +100,6 @@ bool isSouthEast( int dx, int dy )
 	return dx >= 0 && dy >= 0 && abs( dx - dy ) <= 1;
 }
 
-bool alwaysTrue( int dx, int dy )
-{
-	return true;
-}
-
 typedef bool( *DeltaCheckFunction )( int dx, int dy );
 
 std::pair<int, int> findNearestSameColor( int x, int y, int dx, int dy )
@@ -136,8 +112,6 @@ std::pair<int, int> findNearestSameColor( int x, int y, int dx, int dy )
 	}
 	return std::make_pair( resultX, resultY );
 }
-
-#include <iostream>
 
 int calcDirectionGradient( const CMatrix& m, int sourceX, int sourceY, int grayPadding, DeltaCheckFunction directionCheck, 
 	int deltaX, int deltaY )
