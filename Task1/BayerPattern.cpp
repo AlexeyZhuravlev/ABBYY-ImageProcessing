@@ -295,10 +295,10 @@ void process( BitmapData& pData )
 	CMatrix paddedGraySource = getPaddedGrayMatrix( pData, grayPadding, 0 );
 
 	int baseAdr = 0;
-	for( int y = 3; y < h; y++ )
+	for( int y = 0; y < h; y++ )
 	{
 		int pixelAdr = baseAdr;
-		for( int x = 3; x < w; x++ )
+		for( int x = 0; x < w; x++ )
 		{
 			int B = 0;
 			int G = 0;
