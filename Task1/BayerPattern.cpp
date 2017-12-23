@@ -11,19 +11,15 @@
 
 using namespace Gdiplus;
 
-static const int LumaRed = 9798;	//	0.299
-static const int LumaGreen = 19235;	//	0.587
-static const int LumaBlue = 3735;	//	0.114
-static const int CoeffNormalizationBitsCount = 15;
-static const int CoeffNormalization = 1 << CoeffNormalizationBitsCount;
-
 typedef std::vector<BYTE> CRow;
 typedef std::vector<CRow> CMatrix;
 
 enum TChannelName {
 	CN_Blue = 0,
 	CN_Green = 1,
-	CN_Red = 2
+	CN_Red = 2,
+
+	CN_Count
 };
 
 CMatrix getPaddedGrayMatrix( const BitmapData& pData, int padding, int fillValue )
@@ -35,17 +31,14 @@ CMatrix getPaddedGrayMatrix( const BitmapData& pData, int padding, int fillValue
 	BYTE *pBuffer = (BYTE *)pData.Scan0;
 	int baseAdr = 0;
 
-	for( int y = 0; y < pData.Height; y++ ) {
+	for( unsigned int y = 0; y < pData.Height; y++ ) {
 		int pixelAdr = baseAdr;
-		for( int x = 0; x < pData.Width; x++ ) {
+		for( unsigned int x = 0; x < pData.Width; x++ ) {
 			int B = pBuffer[pixelAdr]; // blue
 			int G = pBuffer[pixelAdr + 1]; // green
 			int R = pBuffer[pixelAdr + 2]; // red
 
-			int Y = (LumaRed * R + LumaGreen * G + LumaBlue * B + (CoeffNormalization >> 1))
-				>> CoeffNormalizationBitsCount; // luminance
-
-			matrix[y + padding][x + padding] = Y;
+			matrix[y + padding][x + padding] = ( B + G + R ) / 3;
 
 			pixelAdr += 3;
 		}
@@ -57,7 +50,7 @@ CMatrix getPaddedGrayMatrix( const BitmapData& pData, int padding, int fillValue
 
 TChannelName getCurrentBayerChannel( int x, int y )
 {
-	if( x % 2 == 0 && y % 2 == 1 ) {
+	if( ( x + y ) % 2 != 0 ) {
 		return CN_Green;
 	}
 	if( y % 2 == 0 ) {
@@ -67,34 +60,24 @@ TChannelName getCurrentBayerChannel( int x, int y )
 	}
 }
 
-bool notZero( int dx, int dy )
-{
-	return dx != 0 || dy != 0;
-}
-
-bool isZero( int dx, int dy )
-{
-	return dx == 0 && dy == 0;
-}
-
 bool isNorth( int dx, int dy )
 {
-	return dy < 0 && abs(dx) + abs(dy) <= 2 || isZero( dx, dy );
+	return dy < 0 && abs(dx) <= 1;
 }
 
 bool isSouth( int dx, int dy )
 {
-	return dy > 0 && abs( dx ) + abs( dy ) <= 2 || isZero( dx, dy );
+	return dy > 0 && abs( dx ) <= 1;
 }
 
 bool isWest( int dx, int dy )
 {
-	return dx < 0 && abs( dx ) + abs( dy ) <= 2 || isZero( dx, dy );
+	return dx < 0 && abs( dy ) <= 1;
 }
 
 bool isEast( int dx, int dy )
 {
-	return dx > 0 && abs( dx ) + abs( dy ) <= 2 || isZero( dx, dy );
+	return dx > 0 && abs( dy ) <= 1;
 }
 
 bool isNorthWest( int dx, int dy )
@@ -117,17 +100,12 @@ bool isSouthEast( int dx, int dy )
 	return dx >= 0 && dy >= 0 && abs( dx - dy ) <= 1;
 }
 
-bool alwaysTrue( int dx, int dy )
-{
-	return true;
-}
-
 typedef bool( *DeltaCheckFunction )( int dx, int dy );
 
 std::pair<int, int> findNearestSameColor( int x, int y, int dx, int dy )
 {
-	int resultX = x;
-	int resultY = y;
+	int resultX = x + dx;
+	int resultY = y + dy;
 	while( getCurrentBayerChannel( x, y ) != getCurrentBayerChannel( resultX, resultY ) ) {
 		resultX += dx;
 		resultY += dy;
@@ -135,20 +113,27 @@ std::pair<int, int> findNearestSameColor( int x, int y, int dx, int dy )
 	return std::make_pair( resultX, resultY );
 }
 
-int calcDirectionGradient( const CMatrix& m, int sourceX, int sourceY, int grayPadding, DeltaCheckFunction directionCheck, int deltaX, int deltaY )
+int calcDirectionGradient( const CMatrix& m, int sourceX, int sourceY, int grayPadding, DeltaCheckFunction directionCheck, 
+	int deltaX, int deltaY )
 {
 	const int radius = 2;
 	int gradient = 0;
+	TChannelName channel = getCurrentBayerChannel( sourceX, sourceY );
 
 	for( int dx = -radius; dx <= radius; dx++ ) {
 		for( int dy = -radius; dy <= radius; dy++ ) {
-			if( !directionCheck( dx, dy ) && notZero( dx, dy ) ) {
+			if( !directionCheck( dx, dy ) ) {
 				continue;
 			}
 			int newX, newY;
 			std::tie(newX, newY) = findNearestSameColor( sourceX + dx, sourceY + dy, -deltaX, -deltaY );
-			int gradientValue = abs( m[sourceY + dx + grayPadding][sourceX + dy + grayPadding] - m[newY + grayPadding][newX + grayPadding] );
-			if( dx * deltaY - dy * deltaX != 0 ) {
+			if( abs( newX - sourceX ) + abs( newY - sourceY ) >= 3 ) {
+				continue;
+			}
+			int gradientValue = abs( m[sourceY + dy + grayPadding][sourceX + dx + grayPadding] - m[newY + grayPadding][newX + grayPadding] );
+			if( ( channel != CN_Green || abs( deltaX ) != abs( deltaY ) ) 
+				&& dx * deltaY - dy * deltaX != 0 ) 
+			{
 				gradientValue /= 2;
 			}
 			gradient += gradientValue;
@@ -159,51 +144,34 @@ int calcDirectionGradient( const CMatrix& m, int sourceX, int sourceY, int grayP
 }
 
 std::tuple<int, int, int> calcEstimation( const CMatrix& m, int sourceX, int sourceY,
-	int grayPadding, DeltaCheckFunction check )
+	int pad, int dx, int dy )
 {
-	int x = sourceX + grayPadding;
-	int y = sourceY + grayPadding;
-	const int radius = 2;
-	int blue = 0;
-	int red = 0;
-	int green = 0;
-	int cntBlue = 0;
-	int cntRed = 0;
-	int cntGreen = 0;
+	int tX = sourceX + dx;
+	int tY = sourceY + dy;
+	std::array<int, CN_Count> colorValues;
+	colorValues.fill( 0 );
 
-	for( int dx = -radius; dx <= radius; dx++ ) {
-		for( int dy = -radius; dy <= radius; dy++ ) {
-			if( !check( dx, dy ) ) {
-				continue;
+	for( TChannelName channel : { CN_Blue, CN_Green, CN_Red } ) {
+		if( getCurrentBayerChannel( tX, tY ) == channel ) {
+			colorValues[channel] = m[tY + pad][tX + pad];
+		} else if( getCurrentBayerChannel( tX + dx, tY + dy ) == channel ) {
+			colorValues[channel] = (m[sourceY + pad][sourceX + pad] + m[tY + dy + pad][tX + dx + pad]) / 2;
+		} else {
+			int sum = 0;
+			int cnt = 0;
+			for( int deltaX = -1; deltaX <= 1; deltaX++ ) {
+				for( int deltaY = -1; deltaY <= 1; deltaY++ ) {
+					if( getCurrentBayerChannel( tX + deltaX, tY + deltaY ) == channel ) {
+						sum += m[tY + deltaY + pad][tX + deltaX + pad];
+						cnt++;
+					}
+				}
 			}
-			TChannelName color = getCurrentBayerChannel( sourceX + dx, sourceY + dy );
-			switch( color ) {
-				case CN_Blue:
-					blue += m[y + dy][x + dx];
-					cntBlue++;
-					break;
-				case CN_Green:
-					green += m[y + dy][x + dx];
-					cntGreen++;
-					break;
-				case CN_Red:
-					red += m[y + dy][x + dx];
-					cntRed++;
-					break;
-			}
+			colorValues[channel] = sum / cnt;
 		}
 	}
-
-	if( cntBlue > 0 ) {
-		blue /= cntBlue;
-	}
-	if( cntGreen > 0 ) {
-		green /= cntGreen;
-	}
-	if( cntRed > 0 ) {
-		red /= cntRed;
-	}
-	return std::make_tuple( blue, green, red );
+		
+	return std::make_tuple( colorValues[CN_Blue], colorValues[CN_Green], colorValues[CN_Red] );
 }
 
 std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX, int sourceY, 
@@ -224,18 +192,29 @@ std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX
 		isNorthWest,
 		isSouthWest
 	};
-	const int gradients[nGradients] = {
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isNorth, 0, -1 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isEast, 1, 0 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isSouth, 0, 1 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isWest, -1, 0 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isNorthEast, 1, -1 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isSouthEast, 1, 1 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isNorthWest, -1, -1 ),
-		calcDirectionGradient( m, sourceX, sourceY, grayPadding, isSouthWest, -1, 1 )
+	const std::pair<int, int> directions[nGradients] = {
+		{0, -1},
+		{1, 0},
+		{0, 1},
+		{-1, 0},
+		{1, -1},
+		{1, 1},
+		{-1, -1},
+		{-1, 1}
 	};
-	int min = *std::min_element( gradients, gradients + nGradients );
-	int max = *std::max_element( gradients, gradients + nGradients );
+	std::array<int, nGradients> gradients;
+	for( int i = 0; i < nGradients; i++ ) {
+		int dx = directions[i].first;
+		int dy = directions[i].second;
+		if( currentChannel == CN_Green ) {
+			dx *= 2;
+			dy *= 2;
+		}
+		gradients[i] = calcDirectionGradient( m, sourceX, sourceY, grayPadding, 
+			checkFunctions[i], dx, dy );
+	}
+	int min = *std::min_element( gradients.begin(), gradients.end() );
+	int max = *std::max_element( gradients.begin(), gradients.end() );
 	int treshold = static_cast<int>( k1 * min + k2 * ( max - min ) );
 
 	int sumR = 0;
@@ -244,9 +223,10 @@ std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX
 	int nGoodGradients = 0;
 
 	for( int i = 0; i < nGradients; i++ ) {
-		if( gradients[i] >= treshold ) {
+		if( gradients[i] <= treshold ) {
 			int db, dg, dr;
-			std::tie(db, dg, dr) = calcEstimation( m, sourceX, sourceY, grayPadding, checkFunctions[i] );
+			std::tie(db, dg, dr) = calcEstimation( m, sourceX, sourceY, grayPadding,
+				directions[i].first, directions[i].second );
 			sumR += dr;
 			sumB += db;
 			sumG += dg;
@@ -258,21 +238,19 @@ std::tuple<int, int, int> computeVngInterpolation( const CMatrix& m, int sourceX
 	int B = currentIntensity;
 	int R = currentIntensity;
 	int G = currentIntensity;
-	if( nGoodGradients > 0 ) {
-		switch( currentChannel ) {
-			case CN_Red:
-				B += (sumB - sumR) / nGoodGradients;
-				G += (sumG - sumR) / nGoodGradients;
-				break;
-			case CN_Green:
-				R += (sumR - sumG) / nGoodGradients;
-				B += (sumB - sumG) / nGoodGradients;
-				break;
-			case CN_Blue:
-				R += (sumR - sumB) / nGoodGradients;
-				G += (sumG - sumB) / nGoodGradients;
-				break;
-		}
+	switch( currentChannel ) {
+		case CN_Red:
+			B += (sumB - sumR) / nGoodGradients;
+			G += (sumG - sumR) / nGoodGradients;
+			break;
+		case CN_Green:
+			R += (sumR - sumG) / nGoodGradients;
+			B += (sumB - sumG) / nGoodGradients;
+			break;
+		case CN_Blue:
+			R += (sumR - sumB) / nGoodGradients;
+			G += (sumG - sumB) / nGoodGradients;
+			break;
 	}
 	return std::make_tuple( B, G, R );
 }
@@ -303,9 +281,9 @@ void process( BitmapData& pData )
 			std::tie( B, G, R ) = computeVngInterpolation( paddedGraySource, x,
 				y, grayPadding );
 
-			pBuffer[pixelAdr] = B;
-			pBuffer[pixelAdr + 1] = G;
-			pBuffer[pixelAdr + 2] = R;
+			pBuffer[pixelAdr] = static_cast<BYTE>( max( 0, min( 255, B ) ) );
+			pBuffer[pixelAdr + 1] = static_cast<BYTE>( max( 0, min( 255, G ) ) );
+			pBuffer[pixelAdr + 2] = static_cast<BYTE>( max( 0, min( 255, R ) ) );
 
 			pixelAdr += bpp;
 		}
